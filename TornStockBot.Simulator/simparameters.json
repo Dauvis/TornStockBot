@@ -1,0 +1,8 @@
+{
+  "TestStockId": 1,
+  "TestStockAcronym": "TST",
+  "SimulationDataFolder": "Data",
+  "SimulationRunExtension": "json",
+  "SimulationInitExtension":  "csv",
+  "SimulationDataExtension": "csv"
+}

@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net6.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TornStockBot.Archive\TornStockBot.Archive.csproj" />
+    <ProjectReference Include="..\TornStockBot.Common\TornStockBot.Common.csproj" />
+    <ProjectReference Include="..\TornStockBot.Logic\TornStockBot.Logic.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="simparameters.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="parameters.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>
