@@ -361,3 +361,8 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# parameter files
+TornStockBot/parameters.json
+TornStockBot/parameterstest.json
+TornStockBot.Simulator/parameters.json
