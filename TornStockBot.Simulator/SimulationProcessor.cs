@@ -17,14 +17,14 @@ namespace TornStockBot.Simulator
         private readonly SimParameters _simParameters;
         private readonly Dictionary<int, string> _acronymMap;
         private readonly IFileManagement _periodFileManager;
-        private readonly IFileManagement _signaFilelManager;
+        private readonly IFileManagement _signaFileManager;
         private readonly IGenericArchiver<List<PeriodStatistics>> _periodArchiver;
         private readonly IGenericArchiver<List<PeriodSignals>> _signalArchiver;
         private readonly PeriodHelper _periodHelper;
 
-        private IStockStatisticsCalc _statisticsCalc;
-        private IStockDataManager _dataManager;
-        private IStockSignalManager _signalManager;
+        private IStockStatisticsCalc? _statisticsCalc;
+        private IStockDataManager? _dataManager;
+        private IStockSignalManager? _signalManager;
 
         public SimulationProcessor(Parameters parameters, SimParameters simParameters)
         {
@@ -34,16 +34,10 @@ namespace TornStockBot.Simulator
             _periodHelper = new PeriodHelper(_parameters.StockPeriodMinutes);
             _periodFileManager = new FileManagement(_parameters.BaseFolder, _parameters.StockPeriodFileSubfolder, 
                 _parameters.StockPeriodFileBase, _parameters.StockPeriodFileExtension);
-            _signaFilelManager = new FileManagement(_parameters.BaseFolder, _parameters.StockSignalFileSubfolder,
+            _signaFileManager = new FileManagement(_parameters.BaseFolder, _parameters.StockSignalFileSubfolder,
                 _parameters.StockSignalFileBase, _parameters.StockSignalFileExtension);
             _periodArchiver = new StockPeriodArchiver(_periodFileManager);
-            _signalArchiver = new SignalArchiver(_signaFilelManager);
-            _dataManager = new StockDataManager(_parameters);
-            _statisticsCalc = new StockStatisticsCalc(_parameters, _dataManager);
-            _signalManager = new StockSignalManager(_statisticsCalc, _periodHelper);
-
-            _dataManager.PeriodEnded += DataManager_PeriodEnded;
-            _signalManager.MovingAverageCrossingDetected += SignalManager_MovingAverageCrossingDetected;
+            _signalArchiver = new SignalArchiver(_signaFileManager);
         }
 
         private void SignalManager_MovingAverageCrossingDetected(object? sender, MovingAverageEventArgs e)
@@ -53,6 +47,11 @@ namespace TornStockBot.Simulator
 
         private void DataManager_PeriodEnded(string period)
         {
+            if (_statisticsCalc == null || _signalManager == null)
+            {
+                return;
+            }
+
             List<PeriodStatistics> statisticsList = new();
             List<PeriodSignals> signalsList = new();
 
@@ -92,19 +91,39 @@ namespace TornStockBot.Simulator
                         Console.Error.WriteLine($"Invalid command: {cmd}");
                         break;
                 }
-
-                Reset();
             }
         }
 
-        private void Reset()
+        private void SetupExecutionEnvironment()
         {
-            Thread.Sleep(1000);
-            _dataManager.PeriodEnded -= DataManager_PeriodEnded;
+            // force files to archive
             _periodFileManager.ArchiveCurrentFile(false);
+            _signaFileManager.ArchiveCurrentFile(false);
+
             _dataManager = new StockDataManager(_parameters);
             _statisticsCalc = new StockStatisticsCalc(_parameters, _dataManager);
+            _signalManager = new StockSignalManager(_statisticsCalc, _periodHelper);
+
             _dataManager.PeriodEnded += DataManager_PeriodEnded;
+            _signalManager.MovingAverageCrossingDetected += SignalManager_MovingAverageCrossingDetected;
+        }
+
+        private void TeardownExecutionEnvironment()
+        {
+            if (_dataManager != null)
+            {
+                _dataManager.PeriodEnded -= DataManager_PeriodEnded;
+            }
+
+            if (_signalManager != null)
+            {
+                _signalManager.MovingAverageCrossingDetected -= SignalManager_MovingAverageCrossingDetected;
+            }
+
+            _dataManager = null;
+            _statisticsCalc = null;
+            _signalManager = null;
+
             _periodFileManager.ArchiveSuffix = "";
         }
 
@@ -117,6 +136,13 @@ namespace TornStockBot.Simulator
             }
 
             _periodFileManager.ArchiveSuffix = args[0];
+            SetupExecutionEnvironment();
+
+            if (_dataManager == null)
+            {
+                return;
+            }
+
             GetFilename(args[0], out var initialFilename, out var dataFilename);
             var initialList = SimulationReader.LoadPeriodSummaries(initialFilename);
             var dataList = SimulationReader.LoadStockPrices(dataFilename);
@@ -127,6 +153,8 @@ namespace TornStockBot.Simulator
             {
                 _dataManager.AddStockPrices(new List<StockPrice>() { data });
             }
+
+            TeardownExecutionEnvironment();
         }
 
         private void GetFilename(string filenameBase, out string initialFilename, out string dataFilename)
