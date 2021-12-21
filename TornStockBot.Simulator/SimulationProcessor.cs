@@ -16,12 +16,15 @@ namespace TornStockBot.Simulator
         private readonly Parameters _parameters;
         private readonly SimParameters _simParameters;
         private readonly Dictionary<int, string> _acronymMap;
-        private readonly IFileManagement _periodManager;
+        private readonly IFileManagement _periodFileManager;
+        private readonly IFileManagement _signaFilelManager;
         private readonly IGenericArchiver<List<PeriodStatistics>> _periodArchiver;
+        private readonly IGenericArchiver<List<PeriodSignals>> _signalArchiver;
         private readonly PeriodHelper _periodHelper;
 
         private IStockStatisticsCalc _statisticsCalc;
         private IStockDataManager _dataManager;
+        private IStockSignalManager _signalManager;
 
         public SimulationProcessor(Parameters parameters, SimParameters simParameters)
         {
@@ -29,25 +32,42 @@ namespace TornStockBot.Simulator
             _simParameters = simParameters;
             _acronymMap = new Dictionary<int, string>() { { 1, _simParameters.TestStockAcronym } };
             _periodHelper = new PeriodHelper(_parameters.StockPeriodMinutes);
-            _periodManager = new FileManagement(_parameters.BaseFolder, _parameters.StockPeriodFileSubfolder, _parameters.StockPeriodFileBase, _parameters.StockPeriodFileExtension);
-            _periodArchiver = new StockPeriodArchiver(_periodManager);
+            _periodFileManager = new FileManagement(_parameters.BaseFolder, _parameters.StockPeriodFileSubfolder, 
+                _parameters.StockPeriodFileBase, _parameters.StockPeriodFileExtension);
+            _signaFilelManager = new FileManagement(_parameters.BaseFolder, _parameters.StockSignalFileSubfolder,
+                _parameters.StockSignalFileBase, _parameters.StockSignalFileExtension);
+            _periodArchiver = new StockPeriodArchiver(_periodFileManager);
+            _signalArchiver = new SignalArchiver(_signaFilelManager);
             _dataManager = new StockDataManager(_parameters);
             _statisticsCalc = new StockStatisticsCalc(_parameters, _dataManager);
+            _signalManager = new StockSignalManager(_statisticsCalc, _periodHelper);
+
             _dataManager.PeriodEnded += DataManager_PeriodEnded;
+            _signalManager.MovingAverageCrossingDetected += SignalManager_MovingAverageCrossingDetected;
+        }
+
+        private void SignalManager_MovingAverageCrossingDetected(object? sender, MovingAverageEventArgs e)
+        {
+            Console.WriteLine($"{e.Period} - {e.Acronym}: Moving average cross detected: {e.AverageType} {e.FastAverage}/{e.SlowAverage} ({e.CrossingType})");
         }
 
         private void DataManager_PeriodEnded(string period)
         {
             List<PeriodStatistics> statisticsList = new();
+            List<PeriodSignals> signalsList = new();
 
             foreach (var pair in _acronymMap)
             {
                 string acronym = pair.Value;
                 PeriodStatistics statistics = _statisticsCalc.GetPeriodStatistics(period, acronym);
                 statisticsList.Add(statistics);
+
+                PeriodSignals signals = _signalManager.CheckPeriod(period, acronym);
+                signalsList.Add(signals);
             }
 
             _periodArchiver.ArchiveData(_periodHelper.PeriodToTimestamp(period), statisticsList);
+            _signalArchiver.ArchiveData(_periodHelper.PeriodToTimestamp(period), signalsList);
         }
 
         public void RunAsync()
@@ -81,11 +101,11 @@ namespace TornStockBot.Simulator
         {
             Thread.Sleep(1000);
             _dataManager.PeriodEnded -= DataManager_PeriodEnded;
-            _periodManager.ArchiveCurrentFile(false);
+            _periodFileManager.ArchiveCurrentFile(false);
             _dataManager = new StockDataManager(_parameters);
             _statisticsCalc = new StockStatisticsCalc(_parameters, _dataManager);
             _dataManager.PeriodEnded += DataManager_PeriodEnded;
-            _periodManager.ArchiveSuffix = "";
+            _periodFileManager.ArchiveSuffix = "";
         }
 
         private void ProcessRunFile(string[] args)
@@ -96,7 +116,7 @@ namespace TornStockBot.Simulator
                 return;
             }
 
-            _periodManager.ArchiveSuffix = args[0];
+            _periodFileManager.ArchiveSuffix = args[0];
             GetFilename(args[0], out var initialFilename, out var dataFilename);
             var initialList = SimulationReader.LoadPeriodSummaries(initialFilename);
             var dataList = SimulationReader.LoadStockPrices(dataFilename);

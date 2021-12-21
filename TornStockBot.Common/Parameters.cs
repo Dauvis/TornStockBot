@@ -17,6 +17,9 @@ namespace TornStockBot.Common
         public string StockPeriodFileSubfolder { get; set; } = string.Empty;
         public string StockPeriodFileBase { get; set; } = string.Empty;
         public string StockPeriodFileExtension { get; set; } = string.Empty;
+        public string StockSignalFileSubfolder { get; set; } = string.Empty;
+        public string StockSignalFileBase { get; set; } = string.Empty;
+        public string StockSignalFileExtension { get; set; } = string.Empty;
         public int StockPeriodMinutes { get; set; }
         public int PeriodStatisticsMaxCalculationPeriods { get; set; }
         public int SMAShortPeriods { get; set; }
