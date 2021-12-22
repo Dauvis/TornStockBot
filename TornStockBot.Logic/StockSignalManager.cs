@@ -14,6 +14,7 @@ namespace TornStockBot.Logic
 
         private readonly IStockStatisticsCalc _statsCalc;
         private readonly PeriodHelper _periodHelper;
+        private readonly Dictionary<string, SignalState> _signalStates = new();
 
         public StockSignalManager(IStockStatisticsCalc statsCalc, PeriodHelper periodHelper)
         {
@@ -29,7 +30,16 @@ namespace TornStockBot.Logic
                 Timestamp = _periodHelper.PeriodToTimestamp(period)
             };
 
-            CheckForMovingAverageCrossings(period, acronym, signals);
+            if (!_signalStates.ContainsKey(acronym))
+            {
+                SignalState newState = new();
+                newState.InitializeState(period, acronym, _statsCalc, _periodHelper);
+                _signalStates[acronym] = newState;
+            }
+
+            SignalState state = _signalStates[acronym];
+
+            CheckForMovingAverageCrossings(period, acronym, state, signals);
 
             RaiseEvents(period, acronym, signals);
 
@@ -70,53 +80,102 @@ namespace TornStockBot.Logic
             MovingAverageCrossingDetected?.Invoke(this, eventArgs);
         }
 
-        private void CheckForMovingAverageCrossings(string period, string acronym, PeriodSignals signals)
+        private void CheckForMovingAverageCrossings(string period, string acronym, SignalState state, PeriodSignals signals)
         {
             var curStats = _statsCalc.GetPeriodStatistics(period, acronym);
-            var prevStats = _statsCalc.GetPeriodStatistics(_periodHelper.PreviousPeriod(period), acronym);
-            var distStats = _statsCalc.GetPeriodStatistics(_periodHelper.PreviousPeriod(period, 2), acronym);
 
-            signals.SMAShortMediumCrossing = DetectMovingAverageCrossing(curStats.SMAShort, curStats.SMAMedium, 
-                prevStats.SMAShort, prevStats.SMAMedium, distStats.SMAShort, distStats.SMAMedium);
-            signals.SMAShortLongCrossing = DetectMovingAverageCrossing(curStats.SMAShort, curStats.SMALong, 
-                prevStats.SMAShort, prevStats.SMALong, distStats.SMAShort, distStats.SMALong);
-            signals.SMAMediumLongCrossing = DetectMovingAverageCrossing(curStats.SMAMedium, curStats.SMALong, 
-                prevStats.SMAMedium, prevStats.SMALong, distStats.SMAMedium, distStats.SMALong);
-            signals.EMAShortMediumCrossing = DetectMovingAverageCrossing(curStats.EMAShort, curStats.EMAMedium, 
-                prevStats.EMAShort, prevStats.EMAMedium, distStats.EMAShort, distStats.EMAMedium);
-            signals.EMAShortLongCrossing = DetectMovingAverageCrossing(curStats.EMAShort, curStats.EMALong, 
-                prevStats.EMAShort, prevStats.EMALong, distStats.EMAShort, distStats.EMALong);
-            signals.EMAMediumLongCrossing = DetectMovingAverageCrossing(curStats.EMAMedium, curStats.EMALong, 
-                prevStats.EMAMedium, prevStats.EMALong, distStats.EMAMedium, distStats.EMALong);
+            (signals.SMAShortMediumCrossing, state.PreviousSMAShortMediumDiff) = DetectMovingAverageCrossing(
+                curStats.SMAShort, curStats.SMAMedium, state.PreviousSMAShortMediumDiff);
+            (signals.SMAShortLongCrossing, state.PreviousSMAShortLongDiff) = DetectMovingAverageCrossing(
+                curStats.SMAShort, curStats.SMALong, state.PreviousSMAShortLongDiff);
+            (signals.SMAMediumLongCrossing, state.PreviousSMAMediumLongDiff) = DetectMovingAverageCrossing(
+                curStats.SMAMedium, curStats.SMALong, state.PreviousSMAMediumLongDiff);
+            (signals.EMAShortMediumCrossing, state.PreviousEMAShortMediumDiff) = DetectMovingAverageCrossing(
+                curStats.EMAShort, curStats.EMAMedium, state.PreviousEMAShortMediumDiff);
+            (signals.EMAShortLongCrossing, state.PreviousEMAShortLongDiff) = DetectMovingAverageCrossing(
+                curStats.EMAShort, curStats.EMALong, state.PreviousEMAShortLongDiff);
+            (signals.EMAMediumLongCrossing, state.PreviousEMAMediumLongDiff) = DetectMovingAverageCrossing(
+                curStats.EMAMedium, curStats.EMALong, state.PreviousEMAMediumLongDiff);
         }
 
-        private static CrossingType DetectMovingAverageCrossing(decimal curFast, decimal curSlow, 
-            decimal prevFast, decimal prevSlow, decimal distFast, decimal distSlow)
+        private static (CrossingType crossingType, decimal newDiff) DetectMovingAverageCrossing(
+            decimal curFast, decimal curSlow, decimal previousDiff)
         {
-            if ((prevFast > prevSlow) && (curSlow > curFast))
+            decimal diff = curFast - curSlow;
+
+            if (diff == 0)
             {
-                return CrossingType.Death;
+                return (CrossingType.None, previousDiff);
             }
 
-            if ((prevSlow > prevFast) && (curFast > curSlow))
+            if (diff > 0 && previousDiff < 0)
             {
-                return CrossingType.Gold;
+                return (CrossingType.Gold, diff);
             }
 
-            if (prevSlow == prevFast)
+            if (diff < 0 && previousDiff > 0)
             {
-                if ((distFast >= distSlow) && (curSlow > curFast))
+                return (CrossingType.Death, diff);
+            }
+
+            return (CrossingType.None, diff);
+        }
+     
+        private class SignalState
+        {
+            public decimal PreviousSMAShortMediumDiff { get; set; }
+            public decimal PreviousSMAShortLongDiff { get; set; }
+            public decimal PreviousSMAMediumLongDiff { get; set; }
+            public decimal PreviousEMAShortMediumDiff { get; set; }
+            public decimal PreviousEMAShortLongDiff { get; set; }
+            public decimal PreviousEMAMediumLongDiff { get; set; }
+
+            internal void InitializeState(string period, string acronym, IStockStatisticsCalc statsCalc, PeriodHelper periodHelper)
+            {
+                string p = period;
+                int counter = 0;
+                while (counter < 6)
                 {
-                    return CrossingType.Death;
-                }
+                    p = periodHelper.PreviousPeriod(p);
+                    PeriodStatistics stats = statsCalc.GetPeriodStatistics(p, acronym);
 
-                if ((distSlow >= distFast) && (curFast > curSlow))
-                {
-                    return CrossingType.Gold;
+                    if (PreviousSMAShortMediumDiff == 0 && stats.SMAShort != stats.SMAMedium)
+                    {
+                        PreviousSMAShortMediumDiff = stats.SMAShort - stats.SMAMedium;
+                        counter++;
+                    }
+
+                    if (PreviousSMAShortLongDiff == 0 && stats.SMAShort != stats.SMALong)
+                    {
+                        PreviousSMAShortLongDiff = stats.SMAShort - stats.SMALong;
+                        counter++;
+                    }
+
+                    if (PreviousSMAMediumLongDiff == 0 && stats.SMAMedium != stats.SMALong)
+                    {
+                        PreviousSMAMediumLongDiff = stats.SMAMedium - stats.SMALong;
+                        counter++;
+                    }
+
+                    if (PreviousEMAShortMediumDiff == 0 && stats.EMAShort != stats.EMAMedium)
+                    {
+                        PreviousEMAShortMediumDiff = stats.EMAShort - stats.EMAMedium;
+                        counter++;
+                    }
+
+                    if (PreviousEMAShortLongDiff == 0 && stats.EMAShort != stats.EMALong)
+                    {
+                        PreviousEMAShortLongDiff = stats.EMAShort - stats.EMALong;
+                        counter++;
+                    }
+
+                    if (PreviousEMAMediumLongDiff == 0 && stats.EMAMedium != stats.EMALong)
+                    {
+                        PreviousEMAMediumLongDiff = stats.EMAMedium - stats.EMALong;
+                        counter++;
+                    }
                 }
             }
-
-            return CrossingType.None;
         }
     }
 }
